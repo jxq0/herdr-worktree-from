@@ -1,8 +1,8 @@
 id = "worktree-from"
 name = "Worktree From"
-version = "0.2.0"
+version = "0.3.0"
 min_herdr_version = "0.9.0"
-description = "Create a Git worktree, choosing its base branch from a fuzzy-filtered list of local and remote branches"
+description = "Open a worktree on a picked branch, or start a new branch from HEAD"
 platforms = ["linux", "macos"]
 
 # Opening the picker is one line of Herdr CLI, so the action stays a shell
@@ -11,14 +11,14 @@ platforms = ["linux", "macos"]
 [[actions]]
 id = "open"
 title = "New worktree from a branch"
-description = "Pick a base branch, then create the worktree"
+description = "Pick a branch, or type a new branch name"
 contexts = ["global"]
 command = ["bash", "bin/open.sh"]
 
 [[panes]]
 id = "picker"
 title = "New worktree"
-description = "Pick a base branch, then create the worktree"
+description = "Pick a branch, or type a new branch name"
 placement = "popup"
 width = "74%"
 height = "62%"

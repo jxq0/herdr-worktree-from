@@ -1,27 +1,27 @@
 # herdr-worktree-from
 
-A Herdr plugin that creates a Git worktree, but asks which branch to base it on
-first. The picker lists local and remote branches together, sorts them by commit
-date, and filters as you type.
+A Herdr plugin that opens a Git worktree for a branch picked from a
+fuzzy-filtered list of local and remote branches, or starts a brand-new branch
+when the typed name matches nothing.
 
 Press `prefix+ctrl+g` and type a few letters to filter:
 
 ```text
-Base branch > fea
+Branch > fea
 feature/foo          local   2 days ago
 origin/feature-bar   remote  3 weeks ago
 ```
 
-Two ways to create a new branch:
+What Enter does:
 
-- Pick a branch, then name the new branch. Leave the name empty to let Herdr
-  generate `worktree/<adjective>-<noun>-<hex>`. Selecting a remote branch whose
-  short name is not taken locally pre-fills that short name, so
-  `origin/feature-x` becomes a local `feature-x` based on the remote tip.
-- Type a branch name that matches nothing and press Enter. The typed text
-  becomes the new branch name, based on the current HEAD.
-
-Every path creates a new branch; the plugin never checks an existing one out.
+- Local branch that no worktree has checked out: the worktree opens on it.
+- Local branch already checked out, or a remote branch whose short name is
+  taken locally: it asks for a new branch name based on the picked ref. Leave
+  the name empty to let Herdr generate `worktree/<adjective>-<noun>-<hex>`.
+- Remote branch with no local counterpart: a local branch with the same short
+  name is created from the remote tip.
+- Query matches nothing: the query becomes the new branch name, based on the
+  current HEAD.
 
 The bottom bar shows the repository, the current branch, how many local and
 remote branches there are, and the key hints. It uses fzf's footer, so fzf
@@ -65,27 +65,25 @@ replace it.
 `bin/open.sh` reads `HERDR_PLUGIN_CONTEXT_JSON`, passes the focused pane's
 repository root as the popup's `--cwd`, and opens the picker pane.
 `bin/picker.sh` runs `fzf` over `git for-each-ref refs/heads refs/remotes`
-with `--print-query`, skipping remote `HEAD` entries. When the query matches no
-candidate, the query itself becomes the branch name and the base is `HEAD`.
-Otherwise it collects the picked ref and the new branch name and calls:
+with `--print-query`, skipping remote `HEAD` entries. It then calls one of:
 
 ```bash
-herdr worktree create --cwd <repo> --base <picked ref> [--branch <name>] --focus
+herdr worktree create --cwd <repo> --branch <branch> --label <branch> --focus
+herdr worktree create --cwd <repo> --branch <short> --base <remote ref> --focus
+herdr worktree create --cwd <repo> --base <ref> --branch <name> --focus
 ```
 
-Herdr resolves the repository, checks whether the branch name already exists
-locally, creates the checkout under its worktree directory, and opens or focuses
-the workspace. Because the plugin passes `--base`, the new branch starts at the
-picked ref; when the name is empty Herdr generates the branch name instead.
-
-An existing local branch name is refused on purpose: Herdr would check that
-branch out instead of creating a new one from the picked base, which is a
-different operation. Use `herdr worktree open --branch <name>` for that.
+The first opens a worktree on an existing local branch. The second creates a
+local branch from a remote-only branch. The third is used when a name is
+needed: a branch that is already checked out, a remote branch whose short name
+is taken, or a query that matched nothing with `HEAD` as the base. Herdr
+resolves the repository, checks the branch out or creates it from the base, and
+opens or focuses the workspace.
 
 ## Debugging
 
 ```bash
 bin/picker.sh --list       # candidate refs, no UI
-bin/picker.sh --dry-run    # pick and name, then print the herdr command only
+bin/picker.sh --dry-run    # pick a branch, then print the herdr command only
 herdr plugin log list --plugin worktree-from
 ```

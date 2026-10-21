@@ -3,8 +3,11 @@
 #
 # - Lists local and remote branches (remotes as origin/xxx), newest first.
 # - Type to filter, arrow keys to move, Enter to select, Esc to cancel.
-# - After choosing a base, optionally name the new branch; leave the name
-#   empty to let herdr generate worktree/<adjective>-<noun>-<hex>.
+# - Picking a local branch that is not checked out anywhere opens a worktree on
+#   it. A branch that is already checked out, or a remote branch whose short
+#   name exists locally, asks for a new branch name based on it.
+# - A remote-only branch becomes a local branch with the same short name,
+#   based on the remote tip.
 # - When the query matches nothing, Enter uses the query as the new branch
 #   name and bases it on the current HEAD.
 # - Creation goes through herdr worktree create --base; the workspace,
@@ -96,7 +99,7 @@ fzf_args=(
   --print-query
   --info=inline-right
   --no-separator
-  --prompt='Base branch > '
+  --prompt='Branch > '
   --height=100%
   --layout=reverse
   --tabstop=4
@@ -123,51 +126,69 @@ fzf_status=$?
 query=$(printf '%s\n' "$fzf_out" | sed -n '1p')
 selected=$(printf '%s\n' "$fzf_out" | sed -n '2p')
 
+branch_checked_out() {
+  git worktree list --porcelain |
+    LC_ALL=C awk -v ref="refs/heads/$1" '$1 == "branch" && $2 == ref { found = 1 } END { exit found ? 0 : 1 }'
+}
+
+direct_branch=""
+direct_base=""
+needs_name=0
+reason=""
+new_branch=""
+
 if [[ -z "$selected" ]]; then
   # Nothing matched: treat the query as the new branch name and base it on HEAD.
   new_branch="${query#"${query%%[![:space:]]*}"}"
   new_branch="${new_branch%"${new_branch##*[![:space:]]}"}"
   [[ -n "$new_branch" ]] || exit 0
   ref="HEAD"
-  type="head"
   printf 'No branch matched; creating %s from the current HEAD\n' "$new_branch"
 else
   ref=$(printf '%s' "$selected" | cut -f1)
   type=$(printf '%s' "$selected" | cut -f2)
 
-  # A remote branch with no local counterpart pre-fills its short name, so
-  # origin/feature-x becomes a local feature-x based on the remote tip.
-  default=""
   if [[ "$type" == "remote" ]]; then
     short=${ref#*/}
-    if [[ -n "$short" ]] && ! git show-ref --verify --quiet "refs/heads/$short"; then
-      default=$short
+    if git show-ref --verify --quiet "refs/heads/$short"; then
+      needs_name=1
+      reason="Local branch ${short} already exists"
+    else
+      direct_branch=$short
+      direct_base=$ref
     fi
-  fi
-
-  printf 'New worktree based on %s\n' "$ref"
-  if [[ -n "$default" ]]; then
-    printf 'New branch name [Enter for %s]: ' "$default"
+  elif branch_checked_out "$ref"; then
+    needs_name=1
+    reason="Branch ${ref} is already checked out"
   else
-    printf 'New branch name [Enter to let herdr generate one]: '
+    direct_branch=$ref
   fi
+fi
+
+if [[ $needs_name -eq 1 ]]; then
+  printf '%s; creating a new branch based on %s\n' "$reason" "$ref"
+  printf 'New branch name [Enter to let herdr generate one]: '
   IFS= read -r -e new_branch || true
   new_branch="${new_branch#"${new_branch%%[![:space:]]*}"}"
   new_branch="${new_branch%"${new_branch##*[![:space:]]}"}"
-  [[ -z "$new_branch" ]] && new_branch=$default
 fi
 
 if [[ -n "$new_branch" ]]; then
   git check-ref-format --branch "$new_branch" >/dev/null 2>&1 ||
     fail "Invalid branch name: $new_branch"
   if git show-ref --verify --quiet "refs/heads/$new_branch"; then
-    fail "Branch ${new_branch} already exists locally; choose another name (this plugin only creates new branches)"
+    fail "Branch ${new_branch} already exists locally; choose another name"
   fi
 fi
 
-args=(worktree create --cwd "$repo" --base "$ref" --focus)
-if [[ -n "$new_branch" ]]; then
-  args+=(--branch "$new_branch" --label "$new_branch")
+if [[ -n "$direct_branch" ]]; then
+  args=(worktree create --cwd "$repo" --branch "$direct_branch" --label "$direct_branch" --focus)
+  [[ -n "$direct_base" ]] && args+=(--base "$direct_base")
+else
+  args=(worktree create --cwd "$repo" --base "$ref" --focus)
+  if [[ -n "$new_branch" ]]; then
+    args+=(--branch "$new_branch" --label "$new_branch")
+  fi
 fi
 
 if [[ "$mode" == "dry" ]]; then
