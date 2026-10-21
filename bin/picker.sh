@@ -55,18 +55,23 @@ repo=$(resolve_repo) || fail "当前目录不在 Git 仓库里，也没有可用
 cd "$repo" || fail "进不去 $repo"
 
 list_refs() {
+  # 第一行是新建分支的入口：不基于任何已有分支，直接用当前提交。
+  # 四列依次是：显示文本、真实 ref、类型、时间；fzf 只显示 1、3、4 列。
+  if git rev-parse --verify --quiet HEAD >/dev/null; then
+    printf '+ 新建分支（基于当前 HEAD）\tHEAD\t当前\t%s\n' "$(git log -1 --format=%cr)"
+  fi
   git for-each-ref --sort=-committerdate \
-    --format=$'%(refname:short)\t本地\t%(committerdate:relative)' refs/heads
+    --format=$'%(refname:short)\t%(refname:short)\t本地\t%(committerdate:relative)' refs/heads
   git for-each-ref --sort=-committerdate \
-    --format=$'%(refname:short)\t远端\t%(committerdate:relative)' refs/remotes |
-    while IFS=$'\t' read -r ref type age; do
+    --format=$'%(refname:short)\t%(refname:short)\t远端\t%(committerdate:relative)' refs/remotes |
+    while IFS=$'\t' read -r display ref type age; do
       [[ "$ref" == */HEAD ]] && continue
-      printf '%s\t%s\t%s\n' "$ref" "$type" "$age"
+      printf '%s\t%s\t%s\t%s\n' "$display" "$ref" "$type" "$age"
     done
 }
 
 refs=$(list_refs)
-[[ -n "$refs" ]] || fail "仓库 $repo 里还没有任何分支"
+[[ -n "$refs" ]] || fail "仓库 $repo 里还没有任何提交，建不了 worktree"
 
 if [[ "$mode" == "list" ]]; then
   printf '%s\n' "$refs"
@@ -82,9 +87,9 @@ selected=$(
   printf '%s\n' "$refs" |
     REPO="$repo" fzf \
       --delimiter=$'\t' \
-      --with-nth=1,2,3 \
+      --with-nth=1,3,4 \
       --prompt='基准分支 > ' \
-      --header=$'仓库 '"$repo_name"'  当前 '"$current"$'\n回车选择 · 输入过滤 · Esc 取消' \
+      --header=$'仓库 '"$repo_name"'  当前 '"$current"$'\n首行直接用当前 HEAD 开新分支 · 输入过滤 · Esc 取消' \
       --height=100% \
       --layout=reverse \
       --tabstop=4 \
@@ -92,13 +97,13 @@ selected=$(
       --cycle \
       --tiebreak=index \
       --pointer='▸' \
-      --preview='git -C "$REPO" log --oneline --decorate --graph -12 {1} 2>&1' \
+      --preview='git -C "$REPO" log --oneline --decorate --graph -12 {2} 2>&1' \
       --preview-window='right,50%,border-left'
 )
 [[ -n "$selected" ]] || exit 0
 
-ref=${selected%%$'\t'*}
-type=$(printf '%s' "$selected" | cut -f2)
+ref=$(printf '%s' "$selected" | cut -f2)
+type=$(printf '%s' "$selected" | cut -f3)
 
 # 选的是远端分支、本地又没有同名分支时，新分支名默认就用它的短名，
 # 相当于把 origin/feature-x 落成本地 feature-x。
