@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 打开选择基准分支的 popup。cwd 取当前 pane 所在仓库，这样 picker 不用猜路径。
+# Open the base-branch picker popup. Use the current pane's repository as cwd
+# so the picker does not have to guess it.
 
 set -uo pipefail
 

@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# 选一个基准分支，再创建基于它的新 worktree。
+# Pick a base branch, then create a worktree on a new branch based on it.
 #
-# - 列表同时包含本地分支和远程分支，远端显示成 origin/xxx，按提交时间倒序。
-# - 输入任意字符过滤，方向键移动，回车选择，Esc 取消。
-# - 选完可以输入新分支名；留空则让 herdr 生成 worktree/<形容词>-<名词>-<hex>。
-# - 过滤后没有任何候选时，回车把输入内容当作全新分支名，基于当前 HEAD 创建。
-# - 创建交给 herdr worktree create --base，workspace、checkout 路径、焦点都由 herdr 管。
+# - Lists local and remote branches (remotes as origin/xxx), newest first.
+# - Type to filter, arrow keys to move, Enter to select, Esc to cancel.
+# - After choosing a base, optionally name the new branch; leave the name
+#   empty to let herdr generate worktree/<adjective>-<noun>-<hex>.
+# - When the query matches nothing, Enter uses the query as the new branch
+#   name and bases it on the current HEAD.
+# - Creation goes through herdr worktree create --base; the workspace,
+#   checkout path and focus stay with herdr.
 #
-# 依赖：git、fzf；jq 可选，用于读 HERDR_PLUGIN_CONTEXT_JSON 和解析错误。
-# 调试：--list 只打印候选分支；--dry-run 打印将要执行的 herdr 命令而不创建。
+# Requires: git and fzf. jq is optional, used for the invocation context and
+# for printing herdr's error message.
+# Debug: --list prints the candidates; --dry-run prints the herdr command.
 
 set -uo pipefail
 
@@ -24,7 +28,7 @@ has_jq=0
 command -v jq >/dev/null 2>&1 && has_jq=1
 
 fail() {
-  printf '\n%s\n\n按任意键关闭…' "$1" >&2
+  printf '\n%s\n\nPress any key to close...' "$1" >&2
   read -r -n 1 -s || true
   exit 1
 }
@@ -34,8 +38,8 @@ ctx_field() {
   printf '%s' "$ctx" | jq -r "$1 // empty" 2>/dev/null
 }
 
-# 优先用 herdr 给的 repo_root：当前 workspace 本身是 worktree 时，它指向主仓库，
-# 而不是那份 checkout。
+# Prefer the repo_root from herdr: when the current workspace is itself a
+# linked worktree, it points at the main repository instead of that checkout.
 resolve_repo() {
   local candidate top
   for candidate in \
@@ -52,14 +56,14 @@ resolve_repo() {
   return 1
 }
 
-repo=$(resolve_repo) || fail "当前目录不在 Git 仓库里，也没有可用的 pane cwd"
-cd "$repo" || fail "进不去 $repo"
+repo=$(resolve_repo) || fail "Not inside a Git repository and no pane cwd is available"
+cd "$repo" || fail "Cannot enter $repo"
 
 list_refs() {
   git for-each-ref --sort=-committerdate \
-    --format=$'%(refname:short)\t本地\t%(committerdate:relative)' refs/heads
+    --format=$'%(refname:short)\tlocal\t%(committerdate:relative)' refs/heads
   git for-each-ref --sort=-committerdate \
-    --format=$'%(refname:short)\t远端\t%(committerdate:relative)' refs/remotes |
+    --format=$'%(refname:short)\tremote\t%(committerdate:relative)' refs/remotes |
     while IFS=$'\t' read -r ref type age; do
       [[ "$ref" == */HEAD ]] && continue
       printf '%s\t%s\t%s\n' "$ref" "$type" "$age"
@@ -67,22 +71,22 @@ list_refs() {
 }
 
 refs=$(list_refs)
-[[ -n "$refs" ]] || fail "仓库 $repo 里还没有任何分支"
+[[ -n "$refs" ]] || fail "Repository $repo has no branches yet"
 
 if [[ "$mode" == "list" ]]; then
   printf '%s\n' "$refs"
   exit 0
 fi
 
-command -v fzf >/dev/null 2>&1 || fail "需要 fzf：brew install fzf"
+command -v fzf >/dev/null 2>&1 || fail "fzf is required: brew install fzf"
 
 current=$(git symbolic-ref --short -q HEAD 2>/dev/null || printf 'detached')
 repo_name=${repo##*/}
-local_count=$(printf '%s\n' "$refs" | LC_ALL=C awk -F'\t' '$2 == "本地" { n++ } END { print n + 0 }')
-remote_count=$(printf '%s\n' "$refs" | LC_ALL=C awk -F'\t' '$2 == "远端" { n++ } END { print n + 0 }')
-footnote="仓库 ${repo_name} · 当前 ${current} · 本地 ${local_count} · 远端 ${remote_count}"$'\n'"输入过滤 · 无匹配回车即按输入名从 HEAD 新建 · Esc 取消"
+local_count=$(printf '%s\n' "$refs" | LC_ALL=C awk -F'\t' '$2 == "local" { n++ } END { print n + 0 }')
+remote_count=$(printf '%s\n' "$refs" | LC_ALL=C awk -F'\t' '$2 == "remote" { n++ } END { print n + 0 }')
+footnote="repo ${repo_name} · branch ${current} · ${local_count} local · ${remote_count} remote"$'\n'"Enter on no match: new branch from HEAD · Esc to cancel"
 
-# fzf 0.63 起才有 --footer；旧版本退回顶部 header，功能不变。
+# --footer exists since fzf 0.63. Older versions get the same text as a header.
 has_footer=0
 fzf --help 2>/dev/null | grep -q -- '--footer' && has_footer=1
 
@@ -92,7 +96,7 @@ fzf_args=(
   --print-query
   --info=inline-right
   --no-separator
-  --prompt='基准分支 > '
+  --prompt='Base branch > '
   --height=100%
   --layout=reverse
   --tabstop=4
@@ -120,32 +124,32 @@ query=$(printf '%s\n' "$fzf_out" | sed -n '1p')
 selected=$(printf '%s\n' "$fzf_out" | sed -n '2p')
 
 if [[ -z "$selected" ]]; then
-  # 没有任何候选匹配：把输入的内容当作全新分支名，基准用当前 HEAD。
+  # Nothing matched: treat the query as the new branch name and base it on HEAD.
   new_branch="${query#"${query%%[![:space:]]*}"}"
   new_branch="${new_branch%"${new_branch##*[![:space:]]}"}"
   [[ -n "$new_branch" ]] || exit 0
   ref="HEAD"
-  type="当前"
-  printf '没有匹配的分支，基于当前 HEAD 新建 %s\n' "$new_branch"
+  type="head"
+  printf 'No branch matched; creating %s from the current HEAD\n' "$new_branch"
 else
   ref=$(printf '%s' "$selected" | cut -f1)
   type=$(printf '%s' "$selected" | cut -f2)
 
-  # 选的是远端分支、本地又没有同名分支时，新分支名默认就用它的短名，
-  # 相当于把 origin/feature-x 落成本地 feature-x。
+  # A remote branch with no local counterpart pre-fills its short name, so
+  # origin/feature-x becomes a local feature-x based on the remote tip.
   default=""
-  if [[ "$type" == "远端" ]]; then
+  if [[ "$type" == "remote" ]]; then
     short=${ref#*/}
     if [[ -n "$short" ]] && ! git show-ref --verify --quiet "refs/heads/$short"; then
       default=$short
     fi
   fi
 
-  printf '基于 %s 新建 worktree\n' "$ref"
+  printf 'New worktree based on %s\n' "$ref"
   if [[ -n "$default" ]]; then
-    printf '新分支名 [回车用 %s]: ' "$default"
+    printf 'New branch name [Enter for %s]: ' "$default"
   else
-    printf '新分支名 [回车让 herdr 自动生成]: '
+    printf 'New branch name [Enter to let herdr generate one]: '
   fi
   IFS= read -r -e new_branch || true
   new_branch="${new_branch#"${new_branch%%[![:space:]]*}"}"
@@ -155,9 +159,9 @@ fi
 
 if [[ -n "$new_branch" ]]; then
   git check-ref-format --branch "$new_branch" >/dev/null 2>&1 ||
-    fail "分支名不合法：$new_branch"
+    fail "Invalid branch name: $new_branch"
   if git show-ref --verify --quiet "refs/heads/$new_branch"; then
-    fail "本地已经有分支 ${new_branch}，换一个名字（这个插件只用来新建 worktree）"
+    fail "Branch ${new_branch} already exists locally; choose another name (this plugin only creates new branches)"
   fi
 fi
 
@@ -167,9 +171,9 @@ if [[ -n "$new_branch" ]]; then
 fi
 
 if [[ "$mode" == "dry" ]]; then
-  printf '\n将执行：'
+  printf '\nWould run: '
   printf '%q ' "$herdr_bin" "${args[@]}"
-  printf '\n按任意键关闭…'
+  printf '\nPress any key to close...'
   read -r -n 1 -s || true
   exit 0
 fi
@@ -178,11 +182,11 @@ output=$("$herdr_bin" "${args[@]}" 2>&1)
 status=$?
 
 if [[ $has_jq -eq 1 ]] && printf '%s' "$output" | jq -e '.error' >/dev/null 2>&1; then
-  fail "创建失败：$(printf '%s' "$output" | jq -r '.error.message // "未知错误"')"
+  fail "Could not create the worktree: $(printf '%s' "$output" | jq -r '.error.message // "unknown error"')"
 fi
 
 if [[ $status -ne 0 ]]; then
-  fail "创建失败：${output:-herdr worktree create 退出码 $status}"
+  fail "Could not create the worktree: ${output:-herdr worktree create exited with status $status}"
 fi
 
 exit 0

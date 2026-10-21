@@ -7,9 +7,9 @@ date, and filters as you type.
 Press `prefix+ctrl+g` and type a few letters to filter:
 
 ```text
-基准分支 > fea
-feature/foo          本地   2 days ago
-origin/feature-bar   远端   3 weeks ago
+Base branch > fea
+feature/foo          local   2 days ago
+origin/feature-bar   remote  3 weeks ago
 ```
 
 Two ways to create a new branch:
