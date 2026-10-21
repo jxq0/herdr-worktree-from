@@ -35,13 +35,23 @@ remote branches there are, and the key hints. It uses fzf's footer, so fzf
 
 ## Install
 
-Link the working directory, since this is a local plugin:
+Install from GitHub:
 
 ```bash
-herdr plugin link ~/code/herdr-worktree-from
+herdr plugin install jxq0/herdr-worktree-from
 ```
 
-Bind a key in `config.toml`:
+Add `--ref <tag-or-commit>` to pin a revision instead of tracking the default
+branch.
+
+To hack on the plugin, clone it and link the clone instead, running this from
+the clone's directory:
+
+```bash
+herdr plugin link .
+```
+
+Then bind a key in `config.toml`:
 
 ```toml
 [[keys.command]]
@@ -82,8 +92,11 @@ opens or focuses the workspace.
 
 ## Debugging
 
+Run these from a clone of the repository, inside the Git repository you want
+to inspect:
+
 ```bash
-bin/picker.sh --list       # candidate refs, no UI
-bin/picker.sh --dry-run    # pick a branch, then print the herdr command only
+./bin/picker.sh --list       # candidate refs, no UI
+./bin/picker.sh --dry-run    # pick a branch, then print the herdr command only
 herdr plugin log list --plugin worktree-from
 ```
