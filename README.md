@@ -8,20 +8,20 @@ Press `prefix+ctrl+g` and type a few letters to filter:
 
 ```text
 基准分支 > fea
-+ 新建分支（基于当前 HEAD）  当前   2 days ago
-feature/foo                  本地   2 days ago
-origin/feature-bar          远端   3 weeks ago
+feature/foo          本地   2 days ago
+origin/feature-bar   远端   3 weeks ago
 ```
 
-The first row starts a brand-new branch at the current commit, so no existing
-branch has to be picked. Every other row is an existing base branch.
+Two ways to create a new branch:
 
-Enter on a row, optionally name the new branch, and Herdr creates the workspace
-and checkout. Leave the name empty to let Herdr generate
-`worktree/<adjective>-<noun>-<hex>`. Selecting a remote branch whose short name
-is not taken locally pre-fills that short name, so `origin/feature-x` becomes a
-local `feature-x` based on the remote tip. Every path creates a new branch; the
-plugin never checks an existing one out.
+- Pick a branch, then name the new branch. Leave the name empty to let Herdr
+  generate `worktree/<adjective>-<noun>-<hex>`. Selecting a remote branch whose
+  short name is not taken locally pre-fills that short name, so
+  `origin/feature-x` becomes a local `feature-x` based on the remote tip.
+- Type a branch name that matches nothing and press Enter. The typed text
+  becomes the new branch name, based on the current HEAD.
+
+Every path creates a new branch; the plugin never checks an existing one out.
 
 ## Requirements
 
@@ -60,9 +60,10 @@ replace it.
 
 `bin/open.sh` reads `HERDR_PLUGIN_CONTEXT_JSON`, passes the focused pane's
 repository root as the popup's `--cwd`, and opens the picker pane.
-`bin/picker.sh` runs `fzf` over `git for-each-ref refs/heads refs/remotes`,
-skips remote `HEAD` entries, and prepends a row whose ref is `HEAD` so a
-brand-new branch can start at the current commit. It then calls:
+`bin/picker.sh` runs `fzf` over `git for-each-ref refs/heads refs/remotes`
+with `--print-query`, skipping remote `HEAD` entries. When the query matches no
+candidate, the query itself becomes the branch name and the base is `HEAD`.
+Otherwise it collects the picked ref and the new branch name and calls:
 
 ```bash
 herdr worktree create --cwd <repo> --base <picked ref> [--branch <name>] --focus

@@ -4,6 +4,7 @@
 # - 列表同时包含本地分支和远程分支，远端显示成 origin/xxx，按提交时间倒序。
 # - 输入任意字符过滤，方向键移动，回车选择，Esc 取消。
 # - 选完可以输入新分支名；留空则让 herdr 生成 worktree/<形容词>-<名词>-<hex>。
+# - 过滤后没有任何候选时，回车把输入内容当作全新分支名，基于当前 HEAD 创建。
 # - 创建交给 herdr worktree create --base，workspace、checkout 路径、焦点都由 herdr 管。
 #
 # 依赖：git、fzf；jq 可选，用于读 HERDR_PLUGIN_CONTEXT_JSON 和解析错误。
@@ -55,23 +56,18 @@ repo=$(resolve_repo) || fail "当前目录不在 Git 仓库里，也没有可用
 cd "$repo" || fail "进不去 $repo"
 
 list_refs() {
-  # 第一行是新建分支的入口：不基于任何已有分支，直接用当前提交。
-  # 四列依次是：显示文本、真实 ref、类型、时间；fzf 只显示 1、3、4 列。
-  if git rev-parse --verify --quiet HEAD >/dev/null; then
-    printf '+ 新建分支（基于当前 HEAD）\tHEAD\t当前\t%s\n' "$(git log -1 --format=%cr)"
-  fi
   git for-each-ref --sort=-committerdate \
-    --format=$'%(refname:short)\t%(refname:short)\t本地\t%(committerdate:relative)' refs/heads
+    --format=$'%(refname:short)\t本地\t%(committerdate:relative)' refs/heads
   git for-each-ref --sort=-committerdate \
-    --format=$'%(refname:short)\t%(refname:short)\t远端\t%(committerdate:relative)' refs/remotes |
-    while IFS=$'\t' read -r display ref type age; do
+    --format=$'%(refname:short)\t远端\t%(committerdate:relative)' refs/remotes |
+    while IFS=$'\t' read -r ref type age; do
       [[ "$ref" == */HEAD ]] && continue
-      printf '%s\t%s\t%s\t%s\n' "$display" "$ref" "$type" "$age"
+      printf '%s\t%s\t%s\n' "$ref" "$type" "$age"
     done
 }
 
 refs=$(list_refs)
-[[ -n "$refs" ]] || fail "仓库 $repo 里还没有任何提交，建不了 worktree"
+[[ -n "$refs" ]] || fail "仓库 $repo 里还没有任何分支"
 
 if [[ "$mode" == "list" ]]; then
   printf '%s\n' "$refs"
@@ -83,13 +79,14 @@ command -v fzf >/dev/null 2>&1 || fail "需要 fzf：brew install fzf"
 current=$(git symbolic-ref --short -q HEAD 2>/dev/null || printf 'detached')
 repo_name=${repo##*/}
 
-selected=$(
+fzf_out=$(
   printf '%s\n' "$refs" |
     REPO="$repo" fzf \
       --delimiter=$'\t' \
-      --with-nth=1,3,4 \
+      --with-nth=1,2,3 \
+      --print-query \
       --prompt='基准分支 > ' \
-      --header=$'仓库 '"$repo_name"'  当前 '"$current"$'\n首行直接用当前 HEAD 开新分支 · 输入过滤 · Esc 取消' \
+      --header=$'仓库 '"$repo_name"'  当前 '"$current"$'\n输入过滤 · 没有匹配就回车：按输入名从当前 HEAD 新建分支 · Esc 取消' \
       --height=100% \
       --layout=reverse \
       --tabstop=4 \
@@ -97,34 +94,47 @@ selected=$(
       --cycle \
       --tiebreak=index \
       --pointer='▸' \
-      --preview='git -C "$REPO" log --oneline --decorate --graph -12 {2} 2>&1' \
+      --preview='git -C "$REPO" log --oneline --decorate --graph -12 {1} 2>&1' \
       --preview-window='right,50%,border-left'
 )
-[[ -n "$selected" ]] || exit 0
+fzf_status=$?
+[[ $fzf_status -eq 130 ]] && exit 0
+query=$(printf '%s\n' "$fzf_out" | sed -n '1p')
+selected=$(printf '%s\n' "$fzf_out" | sed -n '2p')
 
-ref=$(printf '%s' "$selected" | cut -f2)
-type=$(printf '%s' "$selected" | cut -f3)
-
-# 选的是远端分支、本地又没有同名分支时，新分支名默认就用它的短名，
-# 相当于把 origin/feature-x 落成本地 feature-x。
-default=""
-if [[ "$type" == "远端" ]]; then
-  short=${ref#*/}
-  if [[ -n "$short" ]] && ! git show-ref --verify --quiet "refs/heads/$short"; then
-    default=$short
-  fi
-fi
-
-printf '基于 %s 新建 worktree\n' "$ref"
-if [[ -n "$default" ]]; then
-  printf '新分支名 [回车用 %s]: ' "$default"
+if [[ -z "$selected" ]]; then
+  # 没有任何候选匹配：把输入的内容当作全新分支名，基准用当前 HEAD。
+  new_branch="${query#"${query%%[![:space:]]*}"}"
+  new_branch="${new_branch%"${new_branch##*[![:space:]]}"}"
+  [[ -n "$new_branch" ]] || exit 0
+  ref="HEAD"
+  type="当前"
+  printf '没有匹配的分支，基于当前 HEAD 新建 %s\n' "$new_branch"
 else
-  printf '新分支名 [回车让 herdr 自动生成]: '
+  ref=$(printf '%s' "$selected" | cut -f1)
+  type=$(printf '%s' "$selected" | cut -f2)
+
+  # 选的是远端分支、本地又没有同名分支时，新分支名默认就用它的短名，
+  # 相当于把 origin/feature-x 落成本地 feature-x。
+  default=""
+  if [[ "$type" == "远端" ]]; then
+    short=${ref#*/}
+    if [[ -n "$short" ]] && ! git show-ref --verify --quiet "refs/heads/$short"; then
+      default=$short
+    fi
+  fi
+
+  printf '基于 %s 新建 worktree\n' "$ref"
+  if [[ -n "$default" ]]; then
+    printf '新分支名 [回车用 %s]: ' "$default"
+  else
+    printf '新分支名 [回车让 herdr 自动生成]: '
+  fi
+  IFS= read -r -e new_branch || true
+  new_branch="${new_branch#"${new_branch%%[![:space:]]*}"}"
+  new_branch="${new_branch%"${new_branch##*[![:space:]]}"}"
+  [[ -z "$new_branch" ]] && new_branch=$default
 fi
-IFS= read -r -e new_branch || true
-new_branch="${new_branch#"${new_branch%%[![:space:]]*}"}"
-new_branch="${new_branch%"${new_branch##*[![:space:]]}"}"
-[[ -z "$new_branch" ]] && new_branch=$default
 
 if [[ -n "$new_branch" ]]; then
   git check-ref-format --branch "$new_branch" >/dev/null 2>&1 ||
