@@ -1,0 +1,27 @@
+id = "worktree-from"
+name = "Worktree From"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "Create a Git worktree, choosing its base branch from a fuzzy-filtered list of local and remote branches"
+platforms = ["linux", "macos"]
+
+# Opening the picker is one line of Herdr CLI, so the action stays a shell
+# script instead of a long inline command. The script passes the focused pane's
+# repository as --cwd, so the popup does not start in the plugin directory.
+[[actions]]
+id = "open"
+title = "New worktree from a branch"
+description = "Pick a base branch, then create the worktree"
+contexts = ["global"]
+command = ["bash", "bin/open.sh"]
+
+[[panes]]
+id = "picker"
+title = "New worktree"
+description = "Pick a base branch, then create the worktree"
+placement = "popup"
+width = "74%"
+height = "62%"
+# open.sh passes the repository as --cwd, so the script path cannot be relative
+# to the pane's working directory.
+command = ["bash", "-c", "exec \"$HERDR_PLUGIN_ROOT/bin/picker.sh\""]
