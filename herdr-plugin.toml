@@ -1,6 +1,6 @@
 id = "worktree-from"
 name = "Worktree From"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.9.0"
 description = "Create a Git worktree, choosing its base branch from a fuzzy-filtered list of local and remote branches"
 platforms = ["linux", "macos"]

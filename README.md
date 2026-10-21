@@ -23,11 +23,15 @@ Two ways to create a new branch:
 
 Every path creates a new branch; the plugin never checks an existing one out.
 
+The bottom bar shows the repository, the current branch, how many local and
+remote branches there are, and the key hints. It uses fzf's footer, so fzf
+0.63 or newer is needed; older versions show the same text as a header instead.
+
 ## Requirements
 
 - Herdr 0.9.0 or newer
 - `git`, `fzf`, and optionally `jq` (used to read the invocation context and to
-  print Herdr's error message)
+  print Herdr's error message). fzf 0.63 or newer draws the bottom status bar.
 
 ## Install
 

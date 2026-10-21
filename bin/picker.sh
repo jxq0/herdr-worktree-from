@@ -78,24 +78,41 @@ command -v fzf >/dev/null 2>&1 || fail "需要 fzf：brew install fzf"
 
 current=$(git symbolic-ref --short -q HEAD 2>/dev/null || printf 'detached')
 repo_name=${repo##*/}
+local_count=$(printf '%s\n' "$refs" | LC_ALL=C awk -F'\t' '$2 == "本地" { n++ } END { print n + 0 }')
+remote_count=$(printf '%s\n' "$refs" | LC_ALL=C awk -F'\t' '$2 == "远端" { n++ } END { print n + 0 }')
+footnote="仓库 ${repo_name} · 当前 ${current} · 本地 ${local_count} · 远端 ${remote_count}"$'\n'"输入过滤 · 无匹配回车即按输入名从 HEAD 新建 · Esc 取消"
+
+# fzf 0.63 起才有 --footer；旧版本退回顶部 header，功能不变。
+has_footer=0
+fzf --help 2>/dev/null | grep -q -- '--footer' && has_footer=1
+
+fzf_args=(
+  --delimiter=$'\t'
+  --with-nth=1,2,3
+  --print-query
+  --info=inline-right
+  --no-separator
+  --prompt='基准分支 > '
+  --height=100%
+  --layout=reverse
+  --tabstop=4
+  --no-multi
+  --cycle
+  --tiebreak=index
+  --pointer='▸'
+  --preview='git -C "$REPO" log --oneline --decorate --graph -12 {1} 2>&1'
+  --preview-window='right,50%,border-left'
+)
+
+if [[ $has_footer -eq 1 ]]; then
+  fzf_args+=(--footer="$footnote" --footer-border=line --color=footer:8)
+else
+  fzf_args+=(--header="$footnote")
+fi
 
 fzf_out=$(
   printf '%s\n' "$refs" |
-    REPO="$repo" fzf \
-      --delimiter=$'\t' \
-      --with-nth=1,2,3 \
-      --print-query \
-      --prompt='基准分支 > ' \
-      --header=$'仓库 '"$repo_name"'  当前 '"$current"$'\n输入过滤 · 没有匹配就回车：按输入名从当前 HEAD 新建分支 · Esc 取消' \
-      --height=100% \
-      --layout=reverse \
-      --tabstop=4 \
-      --no-multi \
-      --cycle \
-      --tiebreak=index \
-      --pointer='▸' \
-      --preview='git -C "$REPO" log --oneline --decorate --graph -12 {1} 2>&1' \
-      --preview-window='right,50%,border-left'
+    REPO="$repo" fzf "${fzf_args[@]}"
 )
 fzf_status=$?
 [[ $fzf_status -eq 130 ]] && exit 0
