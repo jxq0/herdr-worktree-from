@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
-# Pick a base branch, then create a worktree on a new branch based on it.
+# Pick a branch, then open a worktree for it.
 #
 # - Lists local and remote branches (remotes as origin/xxx), newest first.
 # - Type to filter, arrow keys to move, Enter to select, Esc to cancel.
-# - Picking a local branch that is not checked out anywhere opens a worktree on
-#   it. A branch that is already checked out, or a remote branch whose short
-#   name exists locally, asks for a new branch name based on it.
-# - A remote-only branch becomes a local branch with the same short name,
-#   based on the remote tip.
-# - When the query matches nothing, Enter uses the query as the new branch
-#   name and bases it on the current HEAD.
-# - Creation goes through herdr worktree create --base; the workspace,
-#   checkout path and focus stay with herdr.
+# - Enter opens a worktree on the picked branch. A local branch is used as is; a
+#   remote branch becomes a local branch with the same short name based on the
+#   remote tip, or reuses the local branch when one already has that name.
+# - alt-enter asks for a new branch name, then opens a worktree on that new
+#   branch, created from the picked ref.
+# - When the query matches nothing, neither key does anything: the picker stays
+#   open until the query matches or Esc is pressed.
+# - Creation goes through herdr worktree create; the workspace, checkout path
+#   and focus stay with herdr.
 #
 # Requires: git and fzf. jq is optional, used for the invocation context and
 # for printing herdr's error message.
 # Debug: --list prints the candidates; --dry-run prints the herdr command.
+#
+# fzf has no ctrl-enter key, so the second action is alt-enter.
 
 set -uo pipefail
 
@@ -87,16 +89,22 @@ current=$(git symbolic-ref --short -q HEAD 2>/dev/null || printf 'detached')
 repo_name=${repo##*/}
 local_count=$(printf '%s\n' "$refs" | LC_ALL=C awk -F'\t' '$2 == "local" { n++ } END { print n + 0 }')
 remote_count=$(printf '%s\n' "$refs" | LC_ALL=C awk -F'\t' '$2 == "remote" { n++ } END { print n + 0 }')
-footnote="repo ${repo_name} · branch ${current} · ${local_count} local · ${remote_count} remote"$'\n'"Enter on no match: new branch from HEAD · Esc to cancel"
+footnote="repo ${repo_name} · branch ${current} · ${local_count} local · ${remote_count} remote"$'\n'"Enter: worktree on this branch · alt-enter: new branch from it · Esc: cancel"
 
 # --footer exists since fzf 0.63. Older versions get the same text as a header.
 has_footer=0
 fzf --help 2>/dev/null | grep -q -- '--footer' && has_footer=1
 
+# alt-enter touches a file so the script can tell the two keys apart after fzf
+# exits. --expect cannot be used here: it takes precedence over --bind, so it
+# would also close the picker on alt-enter when nothing matches.
+action_file=$(mktemp /tmp/worktree-from.XXXXXX)
+rm -f "$action_file"
+trap 'rm -f "$action_file"' EXIT
+
 fzf_args=(
   --delimiter=$'\t'
   --with-nth=1,2,3
-  --print-query
   --info=inline-right
   --no-separator
   --prompt='Branch > '
@@ -109,6 +117,8 @@ fzf_args=(
   --pointer='▸'
   --preview='git -C "$REPO" log --oneline --decorate --graph -12 {1} 2>&1'
   --preview-window='right,50%,border-left'
+  --bind='enter:transform:[[ -n {} ]] && echo accept || echo bell'
+  --bind="alt-enter:transform:[[ -n {} ]] && echo 'execute-silent(touch $action_file)+accept' || echo bell"
 )
 
 if [[ $has_footer -eq 1 ]]; then
@@ -123,57 +133,22 @@ fzf_out=$(
 )
 fzf_status=$?
 [[ $fzf_status -eq 130 ]] && exit 0
-query=$(printf '%s\n' "$fzf_out" | sed -n '1p')
-selected=$(printf '%s\n' "$fzf_out" | sed -n '2p')
+selected=$(printf '%s\n' "$fzf_out" | sed -n '1p')
+[[ -n "$selected" ]] || exit 0
 
-branch_checked_out() {
-  git worktree list --porcelain |
-    LC_ALL=C awk -v ref="refs/heads/$1" '$1 == "branch" && $2 == ref { found = 1 } END { exit found ? 0 : 1 }'
-}
+ref=$(printf '%s' "$selected" | cut -f1)
+type=$(printf '%s' "$selected" | cut -f2)
 
-direct_branch=""
-direct_base=""
-needs_name=0
-reason=""
 new_branch=""
-
-if [[ -z "$selected" ]]; then
-  # Nothing matched: treat the query as the new branch name and base it on HEAD.
-  new_branch="${query#"${query%%[![:space:]]*}"}"
-  new_branch="${new_branch%"${new_branch##*[![:space:]]}"}"
-  [[ -n "$new_branch" ]] || exit 0
-  ref="HEAD"
-  printf 'No branch matched; creating %s from the current HEAD\n' "$new_branch"
-else
-  ref=$(printf '%s' "$selected" | cut -f1)
-  type=$(printf '%s' "$selected" | cut -f2)
-
-  if [[ "$type" == "remote" ]]; then
-    short=${ref#*/}
-    if git show-ref --verify --quiet "refs/heads/$short"; then
-      needs_name=1
-      reason="Local branch ${short} already exists"
-    else
-      direct_branch=$short
-      direct_base=$ref
-    fi
-  elif branch_checked_out "$ref"; then
-    needs_name=1
-    reason="Branch ${ref} is already checked out"
-  else
-    direct_branch=$ref
-  fi
-fi
-
-if [[ $needs_name -eq 1 ]]; then
-  printf '%s; creating a new branch based on %s\n' "$reason" "$ref"
-  printf 'New branch name [Enter to let herdr generate one]: '
+if [[ -e "$action_file" ]]; then
+  printf 'New branch name based on %s [empty line to cancel]: ' "$ref"
   IFS= read -r -e new_branch || true
   new_branch="${new_branch#"${new_branch%%[![:space:]]*}"}"
   new_branch="${new_branch%"${new_branch##*[![:space:]]}"}"
-fi
-
-if [[ -n "$new_branch" ]]; then
+  if [[ -z "$new_branch" ]]; then
+    printf '%s\n' 'Cancelled; nothing was created.'
+    exit 0
+  fi
   git check-ref-format --branch "$new_branch" >/dev/null 2>&1 ||
     fail "Invalid branch name: $new_branch"
   if git show-ref --verify --quiet "refs/heads/$new_branch"; then
@@ -181,14 +156,17 @@ if [[ -n "$new_branch" ]]; then
   fi
 fi
 
-if [[ -n "$direct_branch" ]]; then
-  args=(worktree create --cwd "$repo" --branch "$direct_branch" --label "$direct_branch" --focus)
-  [[ -n "$direct_base" ]] && args+=(--base "$direct_base")
-else
-  args=(worktree create --cwd "$repo" --base "$ref" --focus)
-  if [[ -n "$new_branch" ]]; then
-    args+=(--branch "$new_branch" --label "$new_branch")
+if [[ -n "$new_branch" ]]; then
+  args=(worktree create --cwd "$repo" --base "$ref" --branch "$new_branch" --label "$new_branch" --focus)
+elif [[ "$type" == "remote" ]]; then
+  short=${ref#*/}
+  if git show-ref --verify --quiet "refs/heads/$short"; then
+    args=(worktree create --cwd "$repo" --branch "$short" --label "$short" --focus)
+  else
+    args=(worktree create --cwd "$repo" --branch "$short" --label "$short" --base "$ref" --focus)
   fi
+else
+  args=(worktree create --cwd "$repo" --branch "$ref" --label "$ref" --focus)
 fi
 
 if [[ "$mode" == "dry" ]]; then

@@ -11,14 +11,14 @@ platforms = ["linux", "macos"]
 [[actions]]
 id = "open"
 title = "New worktree from a branch"
-description = "Pick a branch, or type a new branch name"
+description = "Pick a branch, or start a new branch from it"
 contexts = ["global"]
 command = ["bash", "bin/open.sh"]
 
 [[panes]]
 id = "picker"
 title = "New worktree"
-description = "Pick a branch, or type a new branch name"
+description = "Enter: worktree on this branch, alt-enter: new branch from it"
 placement = "popup"
 width = "74%"
 height = "62%"
